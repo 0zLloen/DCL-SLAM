@@ -7,6 +7,8 @@ void distributedMapping::globalDescriptorHandler(
 	const dcl_slam::global_descriptorConstPtr& msg,
 	int& id)
 {
+	std::lock_guard<std::mutex> descriptor_lock(descriptor_mutex);
+
 	// save timestamp
 	robots[id].time_cloud_input_stamp = msg->header.stamp;
 	robots[id].time_cloud_input = robots[id].time_cloud_input_stamp.toSec();
@@ -527,6 +529,8 @@ bool distributedMapping::updatePoses()
 
 void distributedMapping::makeDescriptors()
 {
+	std::lock_guard<std::mutex> descriptor_lock(descriptor_mutex);
+
 	while (!store_descriptors.empty())
 	{
 		auto msg_data = store_descriptors.front().second;

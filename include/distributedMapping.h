@@ -226,6 +226,9 @@ class distributedMapping : public paramsServer
 		// vector<mutex> lock_on_call; // lock on odometry
 
 		/*** distributed loopclosure ***/
+		mutex descriptor_mutex; // protects descriptor storage from the loop thread
+		mutex loop_closure_mutex; // protects external-loop candidates from callbacks
+
 		int intra_robot_loop_ptr; // current position pointer for intra-robot loop
 		int inter_robot_loop_ptr; // current position pointer for inter-robot loop
 

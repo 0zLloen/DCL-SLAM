@@ -80,12 +80,17 @@ link_directories(
 # dcl slam libraay
 add_library(dcl_slam
   src/paramsServer.cpp
-  src/distributedMappingBasis.cpp 
+  src/distributedMappingBasis.cpp
   src/distributedMapping.cpp
   src/distributedMappingVisualization.cpp
   src/distributedLoopClosure.cpp
   src/scanContextDescriptor.cpp
   src/lidarIrisDescriptor.cpp
   src/m2dpDescriptor.cpp)
+# paramsServer.cpp includes auto-generated msg headers (e.g. dcl_slam/neighbor_estimate.h).
+# Without an explicit dependency, catkin can compile the library in parallel
+# with message generation and the headers may not exist yet — fatal include
+# error. add_dependencies forces msg generation to complete first.
+add_dependencies(dcl_slam ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(dcl_slam ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES} ${OpenMP_CXX_FLAGS} ${libnabo_LIBRARIES})
 

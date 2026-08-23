@@ -50,6 +50,7 @@ void distributedMapping::loopInfoHandler(
 		LOG(INFO) << "[loopInfoHandler(" << id << ")]" << " check loop "
 			<< msg->robot0 << "-" << msg->index0 << " " << msg->robot1 << "-" << msg->index1 << "." << endl;
 
+		std::lock_guard<std::mutex> loop_lock(loop_closure_mutex);
 		loop_closures_candidates.push_back(*msg);
 	}
 	// Situation 3: add verified loop closure
@@ -155,6 +156,8 @@ int distributedMapping::detectLoopClosureDistance(
 
 void distributedMapping::performIntraLoopClosure()
 {
+	std::lock_guard<std::mutex> descriptor_lock(descriptor_mutex);
+
 	if(keyframe_descriptor->getSize(id_) <= intra_robot_loop_ptr || !intra_robot_loop_closure_enable_)
 	{
 		return;
@@ -319,6 +322,8 @@ void distributedMapping::loopFindNearKeyframes(
 
 void distributedMapping::performInterLoopClosure()
 {
+	std::lock_guard<std::mutex> descriptor_lock(descriptor_mutex);
+
 	// early return
 	if(keyframe_descriptor->getSize() <= inter_robot_loop_ptr || !inter_robot_loop_closure_enable_)
 	{
@@ -328,9 +333,7 @@ void distributedMapping::performInterLoopClosure()
 	// Place Recognition: find candidates with global descriptor
 	auto matching_result = keyframe_descriptor->detectInterLoopClosureID(inter_robot_loop_ptr);
 	int loop_robot0 = keyframe_descriptor->getIndex(inter_robot_loop_ptr).first;
-	int loop_robot1 = keyframe_descriptor->getIndex(matching_result.first).first;
 	int loop_key0 = keyframe_descriptor->getIndex(inter_robot_loop_ptr).second;
-	int loop_key1 = keyframe_descriptor->getIndex(matching_result.first).second;
 	float init_yaw = matching_result.second;
 	inter_robot_loop_ptr++;
 
@@ -338,6 +341,8 @@ void distributedMapping::performInterLoopClosure()
 	{
 		return;
 	}
+	int loop_robot1 = keyframe_descriptor->getIndex(matching_result.first).first;
+	int loop_key1 = keyframe_descriptor->getIndex(matching_result.first).second;
 
 	LOG(INFO) << "[InterLoop<" << id_ << ">] found between ["
 		<< loop_robot0 << "]-[" << loop_key0 << "][" << inter_robot_loop_ptr-1 << "] and ["
@@ -372,23 +377,30 @@ void distributedMapping::performInterLoopClosure()
 
 void distributedMapping::performExternLoopClosure()
 {
-	// early return
-	if(loop_closures_candidates.empty() || !inter_robot_loop_closure_enable_)
+	if(!inter_robot_loop_closure_enable_)
 	{
 		return;
 	}
 
 	// extract loop for verification
-	dcl_slam::loop_info inter_loop = loop_closures_candidates.front();
-	loop_closures_candidates.pop_front();
+	dcl_slam::loop_info inter_loop;
+	{
+		std::lock_guard<std::mutex> loop_lock(loop_closure_mutex);
+		if(loop_closures_candidates.empty())
+		{
+			return;
+		}
+		inter_loop = loop_closures_candidates.front();
+		loop_closures_candidates.pop_front();
+	}
 
 	auto loop_symbol0 = Symbol('a'+inter_loop.robot0, inter_loop.index0);
 	auto loop_symbol1 = Symbol('a'+inter_loop.robot1, inter_loop.index1);
 	// check the loop closure if added before
 	auto find_key_indexes0 = loop_indexes.find(loop_symbol0);
 	auto find_key_indexes1 = loop_indexes.find(loop_symbol1);
-	if (find_key_indexes0->second.chr() == loop_symbol1.chr() ||
-		find_key_indexes1->second.chr() == loop_symbol0.chr())
+	if ((find_key_indexes0 != loop_indexes.end() && find_key_indexes0->second.chr() == loop_symbol1.chr()) ||
+		(find_key_indexes1 != loop_indexes.end() && find_key_indexes1->second.chr() == loop_symbol0.chr()))
 	{
 		ROS_DEBUG("\033[1;33m[LoopClosure] Loop has added. Skip.\033[0m");
 		return;
@@ -397,6 +409,7 @@ void distributedMapping::performExternLoopClosure()
 	// fail safe
 	if (initial_values->size() < history_keyframe_search_num_*2 || initial_values->size() <= inter_loop.index1)
 	{
+		std::lock_guard<std::mutex> loop_lock(loop_closure_mutex);
 		loop_closures_candidates.push_back(inter_loop);
 		return;
 	}

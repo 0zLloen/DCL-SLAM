@@ -57,7 +57,7 @@ std::pair<Eigen::VectorXf, cv::Mat1b> lidar_iris_descriptor::getIris(
 	Eigen::MatrixXf iris_row_key_matrix = Eigen::MatrixXf::Zero(rows_, columns_);
 
 	// extract lidar iris image
-	if(n_scan_ = 6) // livox
+	if(n_scan_ == 6) // livox
 	{
 		for(auto p : cloud.points)
 		{
@@ -131,10 +131,14 @@ inline cv::Mat lidar_iris_descriptor::circRowShift(
 		return src.clone();
 	}
 	shift_m_rows %= src.rows;
+	if(shift_m_rows == 0)
+	{
+		return src.clone();
+	}
 	int m = shift_m_rows > 0 ? shift_m_rows : src.rows + shift_m_rows;
-	cv::Mat dst(src.size(), src.type());
-	src(cv::Range(src.rows - m, src.rows), cv::Range::all()).copyTo(dst(cv::Range(0, m), cv::Range::all()));
-	src(cv::Range(0, src.rows - m), cv::Range::all()).copyTo(dst(cv::Range(m, src.rows), cv::Range::all()));
+	cv::Mat dst;
+	cv::vconcat(src.rowRange(src.rows - m, src.rows).clone(),
+		src.rowRange(0, src.rows - m).clone(), dst);
 	return dst;
 }
 
@@ -147,10 +151,14 @@ inline cv::Mat lidar_iris_descriptor::circColShift(
 		return src.clone();
 	}
 	shift_n_cols %= src.cols;
+	if(shift_n_cols == 0)
+	{
+		return src.clone();
+	}
 	int n = shift_n_cols > 0 ? shift_n_cols : src.cols + shift_n_cols;
-	cv::Mat dst(src.size(), src.type());
-	src(cv::Range::all(), cv::Range(src.cols - n, src.cols)).copyTo(dst(cv::Range::all(), cv::Range(0, n)));
-	src(cv::Range::all(), cv::Range(0, src.cols - n)).copyTo(dst(cv::Range::all(), cv::Range(n, src.cols)));
+	cv::Mat dst;
+	cv::hconcat(src.colRange(src.cols - n, src.cols).clone(),
+		src.colRange(0, src.cols - n).clone(), dst);
 	return dst;
 }
 
@@ -237,7 +245,7 @@ void lidar_iris_descriptor::logFeatureEncode(
 	std::vector<cv::Mat1b> Tlist(nscale * 2), Mlist(nscale * 2);
 	for (int i = 0; i < list.size(); i++)
 	{
-		cv::Mat1f arr[2];
+		std::vector<cv::Mat> arr;
 		cv::split(list[i], arr);
 		Tlist[i] = arr[0] > 0;
 		Tlist[i + nscale] = arr[1] > 0;
@@ -299,7 +307,10 @@ void lidar_iris_descriptor::forwardFFT(
 	cv::Mat complex_img;
 	merge(planes, 2, complex_img);
 	dft(complex_img, complex_img);
-	split(complex_img, planes);
+	std::vector<cv::Mat> split_planes;
+	split(complex_img, split_planes);
+	planes[0] = split_planes[0];
+	planes[1] = split_planes[1];
 	planes[0] = planes[0](cv::Rect(0, 0, planes[0].cols & -2, planes[0].rows & -2));
 	planes[1] = planes[1](cv::Rect(0, 0, planes[1].cols & -2, planes[1].rows & -2));
 	if(do_recomb)
@@ -742,7 +753,7 @@ std::pair<int, float> lidar_iris_descriptor::detectIntraLoopClosureID(
 	// step 2: pairwise distance
 	for(int i = 0; i < std::min(candidates_num_, int(indice.size())); i++)
 	{
-		if(indice[i] >= indexes_maps[id_].size())
+		if(indice[i] < 0 || indice[i] >= static_cast<int>(indexes_maps[id_].size()))
 		{
 			continue;
 		}
@@ -757,6 +768,10 @@ std::pair<int, float> lidar_iris_descriptor::detectIntraLoopClosureID(
 			min_index = indice[i];
 			min_bias = bias;
 		}
+	}
+	if(min_index < 0)
+	{
+		return result;
 	}
 
 	// threshold check
@@ -835,7 +850,7 @@ std::pair<int, float> lidar_iris_descriptor::detectInterLoopClosureID(
 			// #pragma omp parallel for num_threads(4)
 			for(int i = 0; i < std::min(candidates_num_, int(indice.size())); i++)
 			{
-				if(indice[i] >= new_indexes_maps.size())
+				if(indice[i] < 0 || indice[i] >= static_cast<int>(new_indexes_maps.size()))
 				{
 					continue;
 				}
@@ -852,6 +867,10 @@ std::pair<int, float> lidar_iris_descriptor::detectInterLoopClosureID(
 				}
 			}
 		}
+	}
+	if(min_index < 0 || min_index >= static_cast<int>(iris_feature_index_pairs.size()))
+	{
+		return result;
 	}
 
 	// threshold check
