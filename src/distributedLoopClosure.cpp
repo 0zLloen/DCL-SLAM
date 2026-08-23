@@ -424,7 +424,7 @@ void distributedMapping::performExternLoopClosure()
 	double initial_yaw_;
 	if (descriptor_type_num_ == DescriptorType::LidarIris)
 	{
-		initial_yaw_ = (inter_loop.init_yaw+1)*2*M_PI/60.0;
+		initial_yaw_ = inter_loop.init_yaw*2*M_PI/360.0;
 	}
 	else
 	{
