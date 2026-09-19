@@ -13,6 +13,8 @@
 #include <flann/flann.hpp>
 #include <thread>
 #include <deque>
+#include <set>
+#include <string>
 // dcl_slam define
 #include "paramsServer.h"
 #include "scanContextDescriptor.h"
@@ -132,6 +134,15 @@ class distributedMapping : public paramsServer
 
 		void outliersFiltering();
 
+		void publishAttackReport(
+			const dcl_slam::loop_info& attack_loop,
+			const std::string& stage,
+			const std::string& reason);
+
+		void reportAttackPcmOutcome(
+			const std::pair<Key, Key>& key_pair,
+			const std::string& stage);
+
 		void computeOptimizationOrder();
 
 		void initializePoseGraphOptimization();
@@ -228,6 +239,11 @@ class distributedMapping : public paramsServer
 		/*** distributed loopclosure ***/
 		mutex descriptor_mutex; // protects descriptor storage from the loop thread
 		mutex loop_closure_mutex; // protects external-loop candidates from callbacks
+
+		/*** T2 attack attribution ***/
+		mutex attack_mutex; // guards the two containers below across callback and optimizer threads
+		map<std::pair<Key, Key>, dcl_slam::loop_info> attack_loops; // attacker factors inserted into this robot's graph
+		std::set<std::pair<std::string, std::string>> attack_reported; // (event id, stage) already reported
 
 		int intra_robot_loop_ptr; // current position pointer for intra-robot loop
 		int inter_robot_loop_ptr; // current position pointer for inter-robot loop

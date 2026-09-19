@@ -793,6 +793,21 @@ void distributedMapping::outliersFiltering()
 			}
 			optimizer->setloopclosureIds(new_loopclosure_ids);
 
+			// T2 attribution. Only pairs touching this neighbor were actually
+			// tested against its trajectory; the rest pass by default.
+			for(const auto& accepted_pair : accepted_key_pairs)
+			{
+				if(Symbol(accepted_pair.first).chr() == char(neighbor + 'a') ||
+					Symbol(accepted_pair.second).chr() == char(neighbor + 'a'))
+				{
+					reportAttackPcmOutcome(accepted_pair, "pcm_retained");
+				}
+			}
+			for(const auto& rejected_pair : rejected_key_pairs)
+			{
+				reportAttackPcmOutcome(rejected_pair, "pcm_removed");
+			}
+
 			// save accepted pair
 			for(const auto& accepted_pair : accepted_key_pairs)
 			{

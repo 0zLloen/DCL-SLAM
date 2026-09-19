@@ -7,6 +7,12 @@ void distributedMapping::loopInfoHandler(
 	const dcl_slam::loop_infoConstPtr& msg,
 	int& id)
 {
+	// T2 attribution echoes are for the attack node only, never loop closures.
+	if(msg->attack_report)
+	{
+		return;
+	}
+
 	// Situation 1: need to add pointcloud for loop closure verification
 	if((int)msg->noise == 999)
 	{
@@ -23,6 +29,13 @@ void distributedMapping::loopInfoHandler(
 		loop_msg.index1 = msg->index1;
 		loop_msg.init_yaw = msg->init_yaw;
 		loop_msg.noise = 888.0; // this loop need verification
+		loop_msg.attack = msg->attack;
+		loop_msg.attack_event_id = msg->attack_event_id;
+		loop_msg.attack_mode = msg->attack_mode;
+		loop_msg.attack_dx = msg->attack_dx;
+		loop_msg.attack_dy = msg->attack_dy;
+		loop_msg.attack_alpha = msg->attack_alpha;
+		loop_msg.attack_separation = msg->attack_separation;
 
 		CHECK_LT(loop_msg.index0,keyposes_cloud_6d->size());
 		CHECK_LT(loop_msg.index0,robots[id_].keyframe_cloud_array.size());
@@ -30,6 +43,17 @@ void distributedMapping::loopInfoHandler(
 		// filtered pointcloud
 		pcl::PointCloud<PointPose3D>::Ptr cloudTemp(new pcl::PointCloud<PointPose3D>());
 		*cloudTemp = robots[id_].keyframe_cloud_array[loop_msg.index0];
+		if(msg->attack)
+		{
+			// T2-V: this robot is the compromised one and owns the scan it
+			// submits. Shift a copy by alpha in the keyframe's local xy frame;
+			// the verifier on the other robot then decides on its own.
+			for(auto& point : cloudTemp->points)
+			{
+				point.x += msg->attack_dx;
+				point.y += msg->attack_dy;
+			}
+		}
 		downsample_filter_for_inter_loop2.setInputCloud(cloudTemp);
 		downsample_filter_for_inter_loop2.filter(*cloudTemp);
 		pcl::toROSMsg(*cloudTemp, loop_msg.scan_cloud);
@@ -93,8 +117,71 @@ void distributedMapping::loopInfoHandler(
 			auto new_factor = boost::dynamic_pointer_cast<BetweenFactor<Pose3>>(factor);
 			Matrix covariance_matrix = loop_noise->covariance();
 			robot_local_map.addTransform(*new_factor, covariance_matrix);
+
+			if(msg->attack && !msg->attack_event_id.empty())
+			{
+				{
+					std::lock_guard<std::mutex> attack_lock(attack_mutex);
+					attack_loops[std::make_pair(new_factor->keys().at(0), new_factor->keys().at(1))] = *msg;
+				}
+				publishAttackReport(*msg, "graph_inserted", "");
+			}
 		}
 	}
+}
+
+void distributedMapping::publishAttackReport(
+	const dcl_slam::loop_info& attack_loop,
+	const std::string& stage,
+	const std::string& reason)
+{
+	{
+		std::lock_guard<std::mutex> attack_lock(attack_mutex);
+		if(!attack_reported.insert(std::make_pair(attack_loop.attack_event_id, stage)).second)
+		{
+			return;
+		}
+	}
+
+	dcl_slam::loop_info report = attack_loop;
+	report.header.stamp = ros::Time::now();
+	report.noise = 888.0; // sentinel keeps loopVisualizationNode from drawing it
+	report.scan_cloud = sensor_msgs::PointCloud2();
+	report.attack_report = true;
+	report.attack_stage = stage;
+	report.attack_reporter = id_;
+	report.attack_reason = reason;
+	robots[id_].pub_loop_info.publish(report);
+
+	// Also logged here, so the outcome survives even if the attack node's own
+	// log is cut off at teardown. Event ids and stages are [a-z0-9_-] only.
+	std::cout << "[T2_EVENT] {\"component\":\"dcl_slam\",\"event_id\":\"" << attack_loop.attack_event_id
+		<< "\",\"index0\":" << attack_loop.index0 << ",\"index1\":" << attack_loop.index1
+		<< ",\"mode\":\"" << attack_loop.attack_mode << "\",\"reason\":\"" << reason
+		<< "\",\"reporter\":" << id_ << ",\"robot0\":" << attack_loop.robot0
+		<< ",\"robot1\":" << attack_loop.robot1 << ",\"schema\":\"t2_event_v1\",\"stage\":\"" << stage
+		<< "\"}" << std::endl;
+}
+
+void distributedMapping::reportAttackPcmOutcome(
+	const std::pair<Key, Key>& key_pair,
+	const std::string& stage)
+{
+	dcl_slam::loop_info attack_loop;
+	{
+		std::lock_guard<std::mutex> attack_lock(attack_mutex);
+		auto it = attack_loops.find(key_pair);
+		if(it == attack_loops.end())
+		{
+			it = attack_loops.find(std::make_pair(key_pair.second, key_pair.first));
+		}
+		if(it == attack_loops.end())
+		{
+			return;
+		}
+		attack_loop = it->second;
+	}
+	publishAttackReport(attack_loop, stage, "pcm");
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
@@ -403,6 +490,10 @@ void distributedMapping::performExternLoopClosure()
 		(find_key_indexes1 != loop_indexes.end() && find_key_indexes1->second.chr() == loop_symbol0.chr()))
 	{
 		ROS_DEBUG("\033[1;33m[LoopClosure] Loop has added. Skip.\033[0m");
+		if(inter_loop.attack)
+		{
+			publishAttackReport(inter_loop, "verifier_rejected", "already_added");
+		}
 		return;
 	}
 
@@ -461,11 +552,19 @@ void distributedMapping::performExternLoopClosure()
 	if (scan_cloud_ds->size() < 300 || map_cloud_ds->size() < 1000)
 	{
 		ROS_WARN("keyFrameCloud too little points 2");
+		if(inter_loop.attack)
+		{
+			publishAttackReport(inter_loop, "verifier_rejected", "too_few_points");
+		}
 		return;
 	}
 	if (!scan_cloud_ds->is_dense || !map_cloud_ds->is_dense)
 	{
 		ROS_WARN("keyFrameCloud is not dense");
+		if(inter_loop.attack)
+		{
+			publishAttackReport(inter_loop, "verifier_rejected", "not_dense");
+		}
 		return;
 	}
 
@@ -531,6 +630,10 @@ void distributedMapping::performExternLoopClosure()
 		LOG(INFO) << "[InterLoop<" << id_ << ">] RANSAC failed ("
 			<< new_correspondences.size()*1.0/correspondences->size()*1.0 << " < " 
 			<< ransac_threshold_ << "). Reject." << endl;
+		if(inter_loop.attack)
+		{
+			publishAttackReport(inter_loop, "verifier_rejected", "ransac");
+		}
 		return;
 	}
 	// check if pass ICP fitness score
@@ -541,6 +644,10 @@ void distributedMapping::performExternLoopClosure()
 			inter_loop.noise, fitness_score_threshold_*2);
 		LOG(INFO) << "[InterLoop<" << id_ << ">] ICP failed ("
 			<< inter_loop.noise << " > " << fitness_score_threshold_*2 << "). Reject." << endl;
+		if(inter_loop.attack)
+		{
+			publishAttackReport(inter_loop, "verifier_rejected", "icp_fitness");
+		}
 		return;
 	}
 	ROS_DEBUG("\033[1;35m[InterLoop<%d>] [%d][%d]-[%d][%d] inlier (%.2f < %.2f) fitness (%.2f < %.2f). Add.\033[0m",
@@ -602,7 +709,17 @@ void distributedMapping::performExternLoopClosure()
 	Matrix covariance_matrix = loop_noise->covariance();
 	robot_local_map.addTransform(*new_factor, covariance_matrix);
 
-	// publish loop closure
+	if(inter_loop.attack && !inter_loop.attack_event_id.empty())
+	{
+		{
+			std::lock_guard<std::mutex> attack_lock(attack_mutex);
+			attack_loops[std::make_pair(new_factor->keys().at(0), new_factor->keys().at(1))] = inter_loop;
+		}
+		publishAttackReport(inter_loop, "verifier_accepted", "");
+		publishAttackReport(inter_loop, "graph_inserted", "");
+	}
+
+	// publish loop closure (carries the attribution to the other endpoint)
 	robots[id_].pub_loop_info.publish(inter_loop);
 	loop_indexes.emplace(make_pair(loop_symbol0, loop_symbol1));
 	loop_indexes.emplace(make_pair(loop_symbol1, loop_symbol0));
