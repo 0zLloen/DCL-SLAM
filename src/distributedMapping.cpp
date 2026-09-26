@@ -52,6 +52,8 @@ void distributedMapping::neighborRotationHandler(
 	const dcl_slam::neighbor_estimateConstPtr& msg,
 	int& id)
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	if(msg->receiver_id != id_ || optimizer_state != OptimizerState::RotationEstimation)
 	{
 		return;
@@ -191,6 +193,8 @@ void distributedMapping::neighborPoseHandler(
 	const dcl_slam::neighbor_estimateConstPtr& msg,
 	int& id)
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	if(msg->receiver_id != id_ || optimizer_state != OptimizerState::PoseEstimation)
 	{
 		return;
@@ -336,6 +340,8 @@ void distributedMapping::performDistributedMapping(
 	const pcl::PointCloud<PointPose3D>::Ptr frame_to,
 	const ros::Time& timestamp)
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	// save keyframe cloud
 	pcl::copyPointCloud(*frame_to, *robots[id_].keyframe_cloud);
 	robots[id_].keyframe_cloud_array.push_back(*robots[id_].keyframe_cloud);
@@ -485,6 +491,8 @@ void distributedMapping::updateLocalPath(
 
 bool distributedMapping::updatePoses()
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	bool return_value = false;
 
 	if(keyposes_cloud_3d->empty())
@@ -1300,6 +1308,8 @@ void distributedMapping::changeOptimizerState(
 void distributedMapping::run(
 	const ros::TimerEvent&)
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	// update optimizer state
 	switch(optimizer_state)
 	{

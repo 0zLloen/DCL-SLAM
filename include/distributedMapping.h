@@ -229,6 +229,20 @@ class distributedMapping : public paramsServer
 		mutex descriptor_mutex; // protects descriptor storage from the loop thread
 		mutex loop_closure_mutex; // protects external-loop candidates from callbacks
 
+		// Serialises DCL's shared state across its three threads: the ROS spin
+		// thread (odometry, optimiser, neighbour handlers), loopClosureThread and
+		// globalMapThread. Guards local_pose_graph(_no_filtering), isam2_graph,
+		// robot_local_map, adjacency_matrix, pose_estimates_from_neighbors,
+		// initial_values, the keypose clouds, keyframe_cloud_array, loop_indexs and
+		// kdtree_history_keyposes. Upstream had no lock here (lockOnCall() is
+		// commented out), so a loop-closure insert could reallocate the pose graph
+		// while the optimiser iterated or erased it: SIGSEGV/SIGABRT in
+		// mapOptimization. Recursive because locked entry points call each other.
+		// Lock order: descriptor_mutex / loop_closure_mutex -> state_mutex. The
+		// spin thread never takes descriptor_mutex or loop_closure_mutex while
+		// holding it.
+		std::recursive_mutex state_mutex;
+
 		int intra_robot_loop_ptr; // current position pointer for intra-robot loop
 		int inter_robot_loop_ptr; // current position pointer for inter-robot loop
 

@@ -19,6 +19,8 @@ void distributedMapping::globalMapThread()
 
 void distributedMapping::publishGlobalMap()
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	// early return
 	if(pub_global_map.getNumSubscribers() == 0 || initial_values->empty() == true)
 	{
@@ -86,6 +88,8 @@ void distributedMapping::publishGlobalMap()
 
 void distributedMapping::publishLoopClosureConstraint()
 {
+	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+
 	if(loop_indexs.empty())
 	{
 		return;

@@ -56,6 +56,7 @@ void distributedMapping::loopInfoHandler(
 	// Situation 3: add verified loop closure
 	else
 	{
+		std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
 		LOG(INFO) << "[loopInfoHandler(" << id << ")] add loop "
 			<< msg->robot0 << "-" << msg->index0 << " " << msg->robot1 << "-" << msg->index1 << "." << endl;
 
@@ -108,7 +109,11 @@ void distributedMapping::performRSIntraLoopClosure()
 	}
 
 	// find intra loop closure with radius search
-	auto matching_result = detectLoopClosureDistance(intra_robot_loop_ptr);
+	int matching_result;
+	{
+		std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+		matching_result = detectLoopClosureDistance(intra_robot_loop_ptr);
+	}
 	int loop_key0 = intra_robot_loop_ptr;
 	int loop_key1 = matching_result;
 	intra_robot_loop_ptr++;
@@ -183,6 +188,8 @@ void distributedMapping::calculateTransformation(
 	const int& loop_key0,
 	const int& loop_key1)
 {
+	// Held for the keypose/keyframe reads and for the insert, not during ICP.
+	std::unique_lock<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
 	CHECK_LT(loop_key0, copy_keyposes_cloud_6d->size());
 
 	// get initial pose
@@ -198,6 +205,7 @@ void distributedMapping::calculateTransformation(
 	pcl::PointCloud<PointPose3D>::Ptr map_cloud(new pcl::PointCloud<PointPose3D>());
 	pcl::PointCloud<PointPose3D>::Ptr map_cloud_ds(new pcl::PointCloud<PointPose3D>());
 	loopFindNearKeyframes(map_cloud, loop_key1, history_keyframe_search_num_);
+	state_lock.unlock();
 	downsample_filter_for_intra_loop.setInputCloud(map_cloud);
 	downsample_filter_for_intra_loop.filter(*map_cloud_ds);
 
@@ -271,6 +279,7 @@ void distributedMapping::calculateTransformation(
 		<< pose_between.translation().y() << " " << pose_between.translation().z() << "." << endl;
 	
 	// add loop factor
+	state_lock.lock();
 	Vector vector6(6);
 	vector6 << fitness_score, fitness_score, fitness_score, fitness_score, fitness_score, fitness_score;
 	noiseModel::Diagonal::shared_ptr loop_noise = noiseModel::Diagonal::Variances(vector6);
@@ -394,6 +403,8 @@ void distributedMapping::performExternLoopClosure()
 		loop_closures_candidates.pop_front();
 	}
 
+	// Held for the graph/pose/keyframe reads and for the insert, not during ICP.
+	std::unique_lock<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
 	auto loop_symbol0 = Symbol('a'+inter_loop.robot0, inter_loop.index0);
 	auto loop_symbol1 = Symbol('a'+inter_loop.robot1, inter_loop.index1);
 	// check the loop closure if added before
@@ -454,6 +465,7 @@ void distributedMapping::performExternLoopClosure()
 	pcl::PointCloud<PointPose3D>::Ptr map_cloud(new pcl::PointCloud<PointPose3D>());
 	pcl::PointCloud<PointPose3D>::Ptr map_cloud_ds(new pcl::PointCloud<PointPose3D>());
 	loopFindGlobalNearKeyframes(map_cloud, inter_loop.index1, history_keyframe_search_num_);
+	state_lock.unlock();
 	downsample_filter_for_inter_loop.setInputCloud(map_cloud); // downsample near keyframes
 	downsample_filter_for_inter_loop.filter(*map_cloud_ds);
 
@@ -553,6 +565,7 @@ void distributedMapping::performExternLoopClosure()
 		<< fitness_score_threshold_*2 << "). Add." << endl;
 
 	// get pose transformation
+	state_lock.lock();
 	auto icp_final_tf = Pose3(icp.getFinalTransformation().cast<double>());
 	auto pose_from = icp_final_tf * loop_pose0;
     auto pose_to = loop_pose1;
