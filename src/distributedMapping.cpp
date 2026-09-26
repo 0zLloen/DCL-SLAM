@@ -72,8 +72,16 @@ void distributedMapping::neighborRotationHandler(
 		}
 		else
 		{
-			ROS_DEBUG("Stop optimization<%d>. Key %d %d doesn't exist.", id_, symbol.chr(), symbol.index());
-			abortOptimization(false);
+			// A key PCM has not accepted HERE is one whose factor is not in this
+			// robot's graph, so its rotation estimate is simply not needed. PCM
+			// runs independently on each robot, so a neighbour legitimately sends
+			// estimates for keys this robot has not evaluated yet; aborting the
+			// whole round on the first such key stalls the optimisation for good
+			// (measured: bob aborted 7844 times on carol's keys in a clean
+			// 6-robot run, and 4 of 6 robots never completed a single round).
+			// Skip the key instead, as neighborPoseHandler already does for
+			// out-of-range robots.
+			ROS_DEBUG("Skip unaccepted key<%d> %d %d.", id_, symbol.chr(), symbol.index());
 		}
 	}
 	// update neighbor flags
