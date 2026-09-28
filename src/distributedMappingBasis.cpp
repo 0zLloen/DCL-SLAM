@@ -282,6 +282,34 @@ pcl::PointCloud<PointPose6D>::Ptr distributedMapping::getLocalKeyposesCloud6D()
 	return keyposes_cloud_6d;
 }
 
+pcl::PointCloud<PointPose6D>::Ptr distributedMapping::getGlobalKeyposesCloud6D()
+{
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+	pcl::PointCloud<PointPose6D>::Ptr poses(new pcl::PointCloud<PointPose6D>());
+	poses->resize(keyposes_cloud_6d->size());
+	for(int i = 0; i < (int)poses->size(); i++)
+	{
+		PointPose6D& p = poses->points[i];
+		p.x = p.y = p.z = p.roll = p.pitch = p.yaw = 0.0;
+		p.time = keyposes_cloud_6d->points[i].time;
+		p.intensity = 0.0;
+		Symbol key(id_ + 'a', i);
+		if(!initial_values->exists(key))
+		{
+			continue;
+		}
+		Pose3 pose = initial_values->at<Pose3>(key);
+		p.x = pose.translation().x();
+		p.y = pose.translation().y();
+		p.z = pose.translation().z();
+		p.roll = pose.rotation().roll();
+		p.pitch = pose.rotation().pitch();
+		p.yaw = pose.rotation().yaw();
+		p.intensity = 1.0;
+	}
+	return poses;
+}
+
 pcl::PointCloud<PointPose3D> distributedMapping::getLocalKeyframe(const int& index)
 {
 	return robots[id_].keyframe_cloud_array[index];

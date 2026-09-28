@@ -52,6 +52,12 @@ class distributedMapping : public paramsServer
 
 		pcl::PointCloud<PointPose6D>::Ptr getLocalKeyposesCloud6D();
 
+		// This robot's keyframe poses from the distributed estimate
+		// (initial_values), i.e. in world_frame_ rather than the robot's own
+		// frame. Point i is keyframe i; intensity 1 = estimate present, 0 = none
+		// yet (pose then zero). A snapshot, taken under state_mutex.
+		pcl::PointCloud<PointPose6D>::Ptr getGlobalKeyposesCloud6D();
+
 		pcl::PointCloud<PointPose3D> getLocalKeyframe(const int& index);
 
 		Pose3 getLatestEstimate();
