@@ -1253,6 +1253,22 @@ void distributedMapping::incrementalInitialGuessUpdate()
 
 void distributedMapping::endOptimization()
 {
+	// A robot can reach End alone after its partners aborted (failSafeCheck,
+	// removeInactiveNeighbors); the prior robot then never sent its final
+	// anchor offset. Retracting with a missing offset (operator[] gives zero)
+	// would move this robot into an undefined frame, so abandon the round like
+	// any other aborted one and keep the committed estimate.
+	if(prior_owner != id_)
+	{
+		auto offset = neighbors_anchor_offset.find(prior_owner);
+		if(offset == neighbors_anchor_offset.end())
+		{
+			ROS_WARN("<%d> Round ended without the final estimate of prior robot %d; aborting it.", id_, prior_owner);
+			abortOptimization(true);
+			return;
+		}
+	}
+
 	// retract to global frame
 	if(prior_owner == id_)
 	{
@@ -1393,7 +1409,10 @@ void distributedMapping::run(
 
 		case OptimizerState::End:
 			endOptimization();
-			changeOptimizerState(OptimizerState::PostEndingCommunicationDelay);
+			if(optimizer_state == OptimizerState::End) // not aborted by endOptimization
+			{
+				changeOptimizerState(OptimizerState::PostEndingCommunicationDelay);
+			}
 			optimization_steps++;
 			break;
 
