@@ -711,6 +711,8 @@ void distributedMapping::loopClosureThread()
 	{
 		rate.sleep();
 
+		saveDescriptorBatches(); // queued by the spin thread (makeDescriptors)
+
 		performRSIntraLoopClosure(); // find intra-loop with radius search
 
 		performIntraLoopClosure(); // find intra-loop with descriptor

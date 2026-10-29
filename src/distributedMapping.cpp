@@ -7,7 +7,7 @@ void distributedMapping::globalDescriptorHandler(
 	const dcl_slam::global_descriptorConstPtr& msg,
 	int& id)
 {
-	std::lock_guard<std::mutex> descriptor_lock(descriptor_mutex);
+	std::lock_guard<std::mutex> store_lock(store_descriptors_mutex);
 
 	// save timestamp
 	robots[id].time_cloud_input_stamp = msg->header.stamp;
@@ -545,47 +545,62 @@ bool distributedMapping::updatePoses()
 
 void distributedMapping::makeDescriptors()
 {
+	// Runs in the spin thread, which also carries every message of the distributed
+	// optimisation. Saving and making descriptors needs descriptor_mutex, which the loop
+	// thread holds through each whole loop search (Lidar Iris matching, intra-loop ICP).
+	// Waiting for it here held up the optimisation rounds: at full simulation speed on a
+	// busy node a round took about 150 s of simulated time instead of 4 and was aborted by
+	// the fail-safe. Queue the work; the loop thread does it in the same order.
+	descriptor_batch batch;
+	batch.index = -1;
+	if(!initial_values->empty() && (intra_robot_loop_closure_enable_ || inter_robot_loop_closure_enable_))
+	{
+		// downsample keyframe
+		cloud_for_decript_ds->clear();
+		downsample_filter_for_descriptor.setInputCloud(robots[id_].keyframe_cloud);
+		downsample_filter_for_descriptor.filter(*cloud_for_decript_ds);
+		batch.keyframe = *cloud_for_decript_ds;
+		batch.index = initial_values->size()-1;
+		batch.stamp = robots[id_].time_cloud_input_stamp;
+	}
+
+	std::lock_guard<std::mutex> store_lock(store_descriptors_mutex);
+	batch.received.swap(store_descriptors);
+	descriptor_batches.push_back(std::move(batch));
+}
+
+void distributedMapping::saveDescriptorBatches()
+{
+	deque<descriptor_batch> batches;
+	{
+		std::lock_guard<std::mutex> store_lock(store_descriptors_mutex);
+		batches.swap(descriptor_batches);
+	}
+
 	std::lock_guard<std::mutex> descriptor_lock(descriptor_mutex);
-
-	while (!store_descriptors.empty())
+	for(auto& batch : batches)
 	{
-		auto msg_data = store_descriptors.front().second;
-		auto msg_id = store_descriptors.front().first;
-		store_descriptors.pop_front();
-		keyframe_descriptor->saveDescriptorAndKey(msg_data.values.data(), msg_id, msg_data.index);
-	}
+		for(const auto& received : batch.received)
+		{
+			keyframe_descriptor->saveDescriptorAndKey(received.second.values.data(), received.first, received.second.index);
+		}
+		if(batch.index < 0)
+		{
+			continue;
+		}
 
-	if(initial_values->empty() || (!intra_robot_loop_closure_enable_ && !inter_robot_loop_closure_enable_))
-	{
-		return;
-	}
+		// make and save global descriptors
+		auto descriptor_vec = keyframe_descriptor->makeAndSaveDescriptorAndKey(batch.keyframe, id_, batch.index);
+		LOG(INFO) << "makeDescriptors[" << id_ << "]." << endl;
 
-	// downsample keyframe
-	cloud_for_decript_ds->clear();
-	if(sensor_ == LiDARType::LIVOX)
-	{
-		// pcl::PointCloud<PointPose3D>::Ptr multiKeyFrameCloud(new pcl::PointCloud<PointPose3D>());
-		// loopFindNearKeyframes(multiKeyFrameCloud, initial_values->size() - 1, history_keyframe_search_num_);
-		// downsample_filter_for_descriptor.setInputCloud(multiKeyFrameCloud);
-		downsample_filter_for_descriptor.setInputCloud(robots[id_].keyframe_cloud);
+		// extract descriptors values
+		global_descriptor_msg.values.swap(descriptor_vec);
+		// keyfame index
+		global_descriptor_msg.index = batch.index;
+		global_descriptor_msg.header.stamp = batch.stamp;
+		// publish message
+		robots[id_].pub_descriptors.publish(global_descriptor_msg);
 	}
-	else
-	{
-		downsample_filter_for_descriptor.setInputCloud(robots[id_].keyframe_cloud);
-	}
-	downsample_filter_for_descriptor.filter(*cloud_for_decript_ds);
-
-	// make and save global descriptors
-	auto descriptor_vec = keyframe_descriptor->makeAndSaveDescriptorAndKey(*cloud_for_decript_ds, id_, initial_values->size()-1);
-	LOG(INFO) << "makeDescriptors[" << id_ << "]." << endl;
-
-	// extract descriptors values
-	global_descriptor_msg.values.swap(descriptor_vec);
-	// keyfame index
-	global_descriptor_msg.index = initial_values->size()-1;
-	global_descriptor_msg.header.stamp = robots[id_].time_cloud_input_stamp;
-	// publish message
-	robots[id_].pub_descriptors.publish(global_descriptor_msg);
 }
 
 void distributedMapping::publishPath()

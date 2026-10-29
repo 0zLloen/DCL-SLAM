@@ -81,6 +81,8 @@ class distributedMapping : public paramsServer
 
 		void makeDescriptors();
 
+		void saveDescriptorBatches();
+
 		void publishPath();
 
 		void publishTransformation(
@@ -213,6 +215,20 @@ class distributedMapping : public paramsServer
 		/*** message information ***/
 		pcl::PointCloud<PointPose3D>::Ptr cloud_for_decript_ds; // input cloud for descriptor
 		deque<pair<int, dcl_slam::global_descriptor>> store_descriptors;
+		// One batch per own keyframe: the neighbour descriptors received before it, then its
+		// downsampled cloud (index -1: no own descriptor). The spin thread queues batches
+		// (makeDescriptors); the loop thread saves them in that order and publishes the own
+		// descriptor (saveDescriptorBatches), so the spin thread never waits for
+		// descriptor_mutex, which the loop thread holds through every loop search.
+		struct descriptor_batch
+		{
+			deque<pair<int, dcl_slam::global_descriptor>> received;
+			pcl::PointCloud<PointPose3D> keyframe;
+			int index;
+			ros::Time stamp;
+		};
+		deque<descriptor_batch> descriptor_batches;
+		mutex store_descriptors_mutex; // guards store_descriptors and descriptor_batches only; taken alone
 
 		std_msgs::Int8 state_msg; // optimization state msg
 
