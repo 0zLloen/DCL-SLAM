@@ -19,7 +19,11 @@ void distributedMapping::globalMapThread()
 
 void distributedMapping::publishGlobalMap()
 {
-	std::lock_guard<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
+	// Only the reads of shared state hold state_mutex. Held through the whole rebuild (every
+	// keyframe cloud transformed and downsampled), it blocked LIO scan processing, which takes it
+	// on every keyframe: at full simulation speed on a busy node the mapping thread waited on this
+	// thread for 7-13% of the mission and dropped scans.
+	std::unique_lock<std::recursive_mutex> state_lock(state_mutex); // see state_mutex
 
 	// early return
 	if(pub_global_map.getNumSubscribers() == 0 || initial_values->empty() == true)
@@ -29,6 +33,8 @@ void distributedMapping::publishGlobalMap()
 
 	// copy the poses and change to cloud type
 	Values poses_initial_guess_copy = *initial_values;
+	const ros::Time stamp = robots[id_].time_cloud_input_stamp;
+	state_lock.unlock();
 	pcl::PointCloud<PointPose3D>::Ptr poses_3d_cloud_copy(new pcl::PointCloud<PointPose3D>());
 	pcl::PointCloud<PointPose6D>::Ptr poses_6d_cloud_copy(new pcl::PointCloud<PointPose6D>());
 	for(const Values::ConstKeyValuePair &key_value: poses_initial_guess_copy)
@@ -55,21 +61,25 @@ void distributedMapping::publishGlobalMap()
 		poses_6d_cloud_copy->push_back(pose_6d);
 	}
 
-	// find the closest history key frame
+	// find the closest history key frame (own kd-tree: kdtree_history_keyposes is shared state)
 	std::vector<int> indices;
 	std::vector<float> distances;
-	kdtree_history_keyposes->setInputCloud(poses_3d_cloud_copy);
-	kdtree_history_keyposes->radiusSearch(poses_3d_cloud_copy->back(),
+	pcl::KdTreeFLANN<PointPose3D> kdtree_global_map;
+	kdtree_global_map.setInputCloud(poses_3d_cloud_copy);
+	kdtree_global_map.radiusSearch(poses_3d_cloud_copy->back(),
 		global_map_visualization_radius_, indices, distances, 0);
 
-	// extract visualized key frames
+	// extract visualized key frames; the array can reallocate as keyframes arrive, so copy each under the lock
 	pcl::PointCloud<PointPose3D>::Ptr global_map_keyframes(new pcl::PointCloud<PointPose3D>());
 	pcl::PointCloud<PointPose3D>::Ptr global_map_keyframes_ds(new pcl::PointCloud<PointPose3D>());
 	for (int i = 0; i < (int)indices.size(); ++i)
 	{
 		PointPose6D pose_6d_tmp = poses_6d_cloud_copy->points[indices[i]];
-		*global_map_keyframes += *transformPointCloud(robots[id_].keyframe_cloud_array[pose_6d_tmp.intensity],
-			&pose_6d_tmp);
+		pcl::PointCloud<PointPose3D> keyframe;
+		state_lock.lock();
+		keyframe = robots[id_].keyframe_cloud_array[pose_6d_tmp.intensity];
+		state_lock.unlock();
+		*global_map_keyframes += *transformPointCloud(std::move(keyframe), &pose_6d_tmp);
 	}
 
 	// downsample visualized points
@@ -81,7 +91,7 @@ void distributedMapping::publishGlobalMap()
 	// publish global map
 	sensor_msgs::PointCloud2 global_map_msg;
 	pcl::toROSMsg(*global_map_keyframes_ds, global_map_msg);
-	global_map_msg.header.stamp = robots[id_].time_cloud_input_stamp;
+	global_map_msg.header.stamp = stamp;
 	global_map_msg.header.frame_id = world_frame_;
 	pub_global_map.publish(global_map_msg);
 }
