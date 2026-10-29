@@ -37,6 +37,8 @@
 #include <iostream>
 // log
 #include <glog/logging.h>
+// ros callback queue for the distributed optimisation
+#include <ros/callback_queue.h>
 
 using namespace gtsam;
 using namespace std;
@@ -229,6 +231,12 @@ class distributedMapping : public paramsServer
 		};
 		deque<descriptor_batch> descriptor_batches;
 		mutex store_descriptors_mutex; // guards store_descriptors and descriptor_batches only; taken alone
+		// The distributed optimisation (the round timer and the neighbours' round messages) has its
+		// own callback queue and thread. On the spin thread every round computation held up LIO
+		// scan processing, and LIO held up the round. Both sides take state_mutex for shared state.
+		ros::CallbackQueue dgs_queue;
+		ros::NodeHandle nh_dgs;
+		std::unique_ptr<ros::AsyncSpinner> dgs_spinner;
 
 		std_msgs::Int8 state_msg; // optimization state msg
 

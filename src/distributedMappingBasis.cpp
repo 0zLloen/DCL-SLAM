@@ -11,6 +11,10 @@ distributedMapping::distributedMapping() : paramsServer()
 	FLAGS_log_dir = std::getenv("HOME") + log_dir;
 	LOG(INFO) << "distributed mapping class initialization" << endl;
 
+	// the distributed optimisation's own callback queue (see dgs_queue)
+	nh_dgs = nh;
+	nh_dgs.setCallbackQueue(&dgs_queue);
+
 	/*** robot team ***/
 	singleRobot robot; // each robot
 	for(int it = 0; it < number_of_robots_; it++)
@@ -68,19 +72,19 @@ distributedMapping::distributedMapping() : paramsServer()
 
 			if(global_optmization_enable_)
 			{
-				robot.sub_optimization_state = nh.subscribe<std_msgs::Int8>(
+				robot.sub_optimization_state = nh_dgs.subscribe<std_msgs::Int8>(
 					robot.name_+"/distributedMapping/optimizationState", 50,
 					boost::bind(&distributedMapping::optStateHandler, this, _1, it));
-				robot.sub_rotation_estimate_state = nh.subscribe<std_msgs::Int8>(
+				robot.sub_rotation_estimate_state = nh_dgs.subscribe<std_msgs::Int8>(
 					robot.name_+"/distributedMapping/rotationEstimateState", 50,
 					boost::bind(&distributedMapping::rotationStateHandler, this, _1, it));
-				robot.sub_pose_estimate_state = nh.subscribe<std_msgs::Int8>(
+				robot.sub_pose_estimate_state = nh_dgs.subscribe<std_msgs::Int8>(
 					robot.name_+"/distributedMapping/poseEstimateState", 50,
 					boost::bind(&distributedMapping::poseStateHandler, this, _1, it));
-				robot.sub_neighbor_rotation_estimates = nh.subscribe<dcl_slam::neighbor_estimate>(
+				robot.sub_neighbor_rotation_estimates = nh_dgs.subscribe<dcl_slam::neighbor_estimate>(
 					robot.name_+"/distributedMapping/neighborRotationEstimates", 50,
 					boost::bind(&distributedMapping::neighborRotationHandler, this, _1, it));
-				robot.sub_neighbor_pose_estimates = nh.subscribe<dcl_slam::neighbor_estimate>(
+				robot.sub_neighbor_pose_estimates = nh_dgs.subscribe<dcl_slam::neighbor_estimate>(
 					robot.name_+"/distributedMapping/neighborPoseEstimates", 50,
 					boost::bind(&distributedMapping::neighborPoseHandler, this, _1, it));
 			}
@@ -247,8 +251,10 @@ distributedMapping::distributedMapping() : paramsServer()
 
 	if(global_optmization_enable_)
 	{
-		distributed_mapping_thread = nh.createTimer(
+		distributed_mapping_thread = nh_dgs.createTimer(
 			ros::Duration(mapping_process_interval_), &distributedMapping::run, this);
+		dgs_spinner.reset(new ros::AsyncSpinner(1, &dgs_queue));
+		dgs_spinner->start();
 	}
 
 	LOG(INFO) << "distributed mapping class initialization finish" << endl;
@@ -256,7 +262,10 @@ distributedMapping::distributedMapping() : paramsServer()
 
 distributedMapping::~distributedMapping()
 {
-
+	if(dgs_spinner)
+	{
+		dgs_spinner->stop();
+	}
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
