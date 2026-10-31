@@ -723,6 +723,9 @@ std::pair<int, float> lidar_iris_descriptor::detectIntraLoopClosureID(
 	// step 1: candidates from rowkey tree
 	// kd tree construction
 	Eigen::MatrixXf new_iris_rowkeys;
+	// The keyframe behind each column: iris_rowkeys is an unordered_map, so column i is not keyframe i, and the
+	// tree's indices must be mapped back before the features are compared (PengYu-Team/DCL-SLAM issue #33).
+	std::vector<int> new_iris_ids;
 	// int history_indexes = cur_ptr - exclude_recent_frame_num_;
 	int cur_row = 0;
 	for (auto iris_rowkey : iris_rowkeys[id_])
@@ -734,6 +737,7 @@ std::pair<int, float> lidar_iris_descriptor::detectIntraLoopClosureID(
 
 		new_iris_rowkeys.conservativeResize(rows_, cur_row+1);
 		new_iris_rowkeys.block(0, cur_row, rows_, 1) = iris_rowkey.second.block(0, 0, rows_, 1);
+		new_iris_ids.push_back(iris_rowkey.first);
 		cur_row++;
 	}
 	// new_iris_rowkeys.conservativeResize(rows_, history_indexes);
@@ -753,19 +757,20 @@ std::pair<int, float> lidar_iris_descriptor::detectIntraLoopClosureID(
 	// step 2: pairwise distance
 	for(int i = 0; i < std::min(candidates_num_, int(indice.size())); i++)
 	{
-		if(indice[i] < 0 || indice[i] >= static_cast<int>(indexes_maps[id_].size()))
+		if(indice[i] < 0 || indice[i] >= static_cast<int>(new_iris_ids.size()))
 		{
 			continue;
 		}
 
 		int bias;
-		lidar_iris_descriptor::featureDesc candidate_iris_feature = iris_features[id_][indice[i]];
+		int candidate = new_iris_ids[indice[i]];
+		lidar_iris_descriptor::featureDesc candidate_iris_feature = iris_features[id_][candidate];
 		float candidate_distance = compare(iris_feature, candidate_iris_feature, &bias);
 
 		if(candidate_distance < min_distance)
 		{
 			min_distance = candidate_distance;
-			min_index = indice[i];
+			min_index = candidate;
 			min_bias = bias;
 		}
 	}
