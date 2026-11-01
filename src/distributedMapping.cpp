@@ -116,8 +116,11 @@ void distributedMapping::neighborRotationHandler(
 				abortOptimization(true);
 			}
 
-			// if change is small enough, end rotation optimization
-			if((optimizer->latestChange() <= rotation_estimate_change_threshold_) ||
+			// if change is small enough, end rotation optimization. A round's first sweep has no change of its own:
+			// latestChange() still holds the previous round's last pose change, usually below the threshold, which
+			// would end the rotation stage after one sweep.
+			if(((current_rotation_estimate_iteration > 1) &&
+				(optimizer->latestChange() <= rotation_estimate_change_threshold_)) ||
 				(current_rotation_estimate_iteration >= optmization_maximum_iteration_))
 			{
 				rotation_estimate_finished = true;
